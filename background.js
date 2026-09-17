@@ -1,8 +1,18 @@
-// background.js (MV3 service worker) — orchestrate capture, fetch, ZIP/MD build, download.
+// background.js (MV3 service worker) — orchestrate capture, fetch, ZIP/MD/HTML build, download.
 importScripts('i18n.js');
+importScripts('html.js');
 const LOG = (...a) => console.log('[QMD bg]', ...a);
 
 const defaultTpl = (lang) => tr(lang, 'default_tpl');
+
+// menu id -> {mode, format}
+const ACTIONS = {
+  'qmd-sel-md': { mode: 'selection', format: 'md' },
+  'qmd-sel-html': { mode: 'selection', format: 'html' },
+  'qmd-sel-media': { mode: 'selection', format: 'media' },
+  'qmd-page-md': { mode: 'page', format: 'md' },
+  'qmd-page-html': { mode: 'page', format: 'html' }
+};
 
 chrome.runtime.onInstalled.addListener(async () => {
   const s = await getSettings();
@@ -16,20 +26,23 @@ chrome.storage.onChanged.addListener((ch, area) => {
 
 function makeMenu(lang) {
   chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({
-      id: 'qmd-save-selection',
-      title: tr(lang, 'menu_save'),
-      contexts: ['selection']
-    });
+    chrome.contextMenus.create({ id: 'qmd-sel', title: tr(lang, 'menu_group_sel'), contexts: ['selection'] });
+    chrome.contextMenus.create({ id: 'qmd-sel-md', parentId: 'qmd-sel', title: tr(lang, 'menu_sel_md'), contexts: ['selection'] });
+    chrome.contextMenus.create({ id: 'qmd-sel-html', parentId: 'qmd-sel', title: tr(lang, 'menu_sel_html'), contexts: ['selection'] });
+    chrome.contextMenus.create({ id: 'qmd-sel-media', parentId: 'qmd-sel', title: tr(lang, 'menu_sel_media'), contexts: ['selection'] });
+    chrome.contextMenus.create({ id: 'qmd-page', title: tr(lang, 'menu_group_page'), contexts: ['page'] });
+    chrome.contextMenus.create({ id: 'qmd-page-md', parentId: 'qmd-page', title: tr(lang, 'menu_page_md'), contexts: ['page'] });
+    chrome.contextMenus.create({ id: 'qmd-page-html', parentId: 'qmd-page', title: tr(lang, 'menu_page_html'), contexts: ['page'] });
   });
 }
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId !== 'qmd-save-selection' || !tab || !tab.id) return;
+  const action = ACTIONS[info.menuItemId];
+  if (!action || !tab || !tab.id) return;
   let lang = detectLang();
   try {
     lang = (await getSettings()).ui_lang;
-    await run(tab, lang);
+    await run(tab, action, lang);
   } catch (e) {
     const m = (e && e.message) || String(e);
     LOG('failed', e);
@@ -49,9 +62,9 @@ function notify(lang, key, extra) {
   });
 }
 
-async function run(tab, lang) {
-  LOG('capture start, tab', tab.id);
-  const cap = await chrome.tabs.sendMessage(tab.id, { type: 'capture-selection' });
+async function run(tab, action, lang) {
+  LOG('capture start, tab', tab.id, action);
+  const cap = await chrome.tabs.sendMessage(tab.id, { type: 'capture', mode: action.mode });
   if (!cap || !cap.ok) {
     LOG('capture failed:', cap && cap.error);
     notify(lang, 'notif_no_content');
@@ -59,25 +72,39 @@ async function run(tab, lang) {
   }
   const settings = await getSettings();
   const base = buildFilename(settings.filename_tpl || defaultTpl(settings.ui_lang), cap);
-  const { files } = await buildPackage(cap, base + '.md', settings);
+  const { media, textFile, notDownloaded } = await buildPackage(cap, base, settings, action.format);
+  const enc = new TextEncoder();
+  const files = media.slice();
+  if (notDownloaded.length) {
+    files.push({ name: 'link_not_downloaded.txt', data: enc.encode(notDownloadedText(notDownloaded)) });
+    LOG('links not downloaded:', notDownloaded.length);
+  }
   let dl;
-  if (files.length === 1) {
-    // text-only selection: save the plain .md file, no ZIP wrapper
-    LOG('text-only selection, exporting md directly');
-    dl = {
-      url: 'data:text/markdown;charset=utf-8;base64,' + toB64(files[0].data),
-      filename: base + '.md'
-    };
+  if (action.format === 'media') {
+    if (!files.length) { notify(lang, 'notif_no_media'); return; }
+    dl = zipDownload(base + '.zip', files);
   } else {
-    const zip = zipSync(files);
-    LOG('zip built,', zip.length, 'bytes,', files.length, 'entries');
-    dl = {
-      url: 'data:application/zip;base64,' + toB64(zip),
-      filename: base + '.zip'
-    };
+    files.push(textFile);
+    if (media.length === 0 && notDownloaded.length === 0) {
+      // text-only: save the plain .md/.html file, no ZIP wrapper
+      const mime = action.format === 'html' ? 'text/html' : 'text/markdown';
+      dl = { url: 'data:' + mime + ';charset=utf-8;base64,' + toB64(textFile.data), filename: textFile.name };
+    } else {
+      dl = zipDownload(base + '.zip', files);
+    }
   }
   const id = await chrome.downloads.download(Object.assign({ saveAs: false }, dl));
   LOG('download started:', dl.filename, 'id', id);
+}
+
+function zipDownload(filename, files) {
+  const zip = zipSync(files);
+  LOG('zip built,', zip.length, 'bytes,', files.length, 'entries');
+  return { url: 'data:application/zip;base64,' + toB64(zip), filename };
+}
+
+function notDownloadedText(list) {
+  return 'URL\tREASON\n' + list.map((x) => x.url + '\t' + x.reason).join('\n') + '\n';
 }
 
 // ---- settings ----
@@ -92,59 +119,73 @@ async function getSettings() {
   return d;
 }
 
-// ---- package: fetch images + attachments, dedup, rewrite md ----
-async function buildPackage(cap, mdName, settings) {
+// ---- package: fetch images + attachments, dedup, rewrite md, build text file ----
+// Returns { media: [entries], textFile: {name,data}|null, notDownloaded: [{url,reason}] }
+async function buildPackage(cap, base, settings, format) {
   const enc = new TextEncoder();
   let md = cap.markdown || '';
+  const wantText = format === 'md' || format === 'html';
+  const media = [];
+  const notDownloaded = [];
   const st = {
-    files: [],
+    files: media,
     hashToPath: new Map(),
     usedNames: new Set(),
     onDuplicate: settings.on_duplicate === 'rename' ? 'rename' : 'skip'
   };
   const bgOnly = [];
-  let skipped = 0;
+  const imageUrls = new Set(cap.images || []);
 
   // images
   let n = 0;
-  const imageUrls = new Set(cap.images || []);
   for (const src of cap.images || []) {
     let got;
     try { got = await grabImage(src); }
-    catch (e) { LOG('image skipped:', src, e.message); skipped++; continue; }
+    catch (e) { LOG('image failed:', src, e.message); notDownloaded.push({ url: src, reason: 'IMAGE_FAILED: ' + e.message }); continue; }
     n++;
     const local = await registerFile(got.bytes, 'images/img_' + String(n).padStart(3, '0') + '.' + got.ext, st);
-    if (md.includes(src)) md = md.split(src).join(local);
-    else if (bgOnly.indexOf(local) < 0) bgOnly.push(local);
+    if (wantText) {
+      if (md.includes(src)) md = md.split(src).join(local);
+      else if (bgOnly.indexOf(local) < 0) bgOnly.push(local);
+    }
     LOG('image saved:', src, '->', local, got.bytes.length, 'bytes');
   }
 
   // attachments: links resolving to downloadable files (redirects / view pages parsed).
-  // A link that is NOT an attachment/image, or whose resolution fails, keeps its
-  // original web access URL in the markdown (we never rewrite it to a local path).
+  // Non-file links and failed resolutions keep their web access URL in the text;
+  // media-only mode records every link that could not be saved as a file.
   let a = 0;
-  if (settings.download_attachments) {
+  const tryAttachments = format === 'media' || settings.download_attachments;
+  if (tryAttachments) {
     for (const src of cap.links || []) {
       if (imageUrls.has(src)) continue; // image links are handled above, not as attachments
-      if (!isAttachmentUrl(src)) continue; // plain web link: keep access URL as-is
+      if (!isAttachmentUrl(src)) {
+        if (format === 'media') notDownloaded.push({ url: src, reason: 'NOT_A_FILE' });
+        continue; // md/html: keep access URL as-is
+      }
       let got;
       try { got = await resolveAttachment(src); }
-      catch (e) { LOG('keep access link (not a downloadable file):', src, e.message); skipped++; continue; }
+      catch (e) { LOG('keep access link (not a downloadable file):', src, e.message); notDownloaded.push({ url: src, reason: 'LINK_FAILED: ' + e.message }); continue; }
       a++;
       const clean = sanitizeFileName(got.name);
       const desired = 'attachments/' + (clean && /\.[\w-]+$/.test(clean) ? clean : (clean || 'attachment_' + a) + '.' + got.ext);
       const local = await registerFile(got.bytes, desired, st);
-      if (md.includes(src)) md = md.split(src).join(local);
+      if (wantText && md.includes(src)) md = md.split(src).join(local);
       LOG('attachment saved:', src, '->', local, got.bytes.length, 'bytes');
     }
   }
 
-  if (bgOnly.length) {
-    md += '\n\n## ' + tr(settings.ui_lang || 'en', 'heading_bg') + '\n\n' + bgOnly.map((p) => '![](' + p + ')').join('\n');
+  let textFile = null;
+  if (wantText) {
+    if (bgOnly.length) {
+      md += '\n\n## ' + tr(settings.ui_lang || 'en', 'heading_bg') + '\n\n' + bgOnly.map((p) => '![](' + p + ')').join('\n');
+    }
+    textFile = format === 'html'
+      ? { name: base + '.html', data: enc.encode(wrapHtmlDocument(mdToHtml(md), cap.pageTitle, cap.pageUrl, settings.ui_lang)) }
+      : { name: base + '.md', data: enc.encode(md + '\n') };
   }
-  st.files.push({ name: mdName, data: enc.encode(md + '\n') });
-  LOG('package:', n, 'images,', a, 'attachments,', skipped, 'skipped');
-  return { markdown: md, files: st.files };
+  LOG('package:', n, 'images,', a, 'attachments,', notDownloaded.length, 'not-downloaded, format', format);
+  return { media, textFile, notDownloaded };
 }
 
 async function grabImage(src) {

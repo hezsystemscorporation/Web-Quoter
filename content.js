@@ -24,22 +24,31 @@
   };
 
   chrome.runtime.onMessage.addListener((msg, _snd, respond) => {
-    if (msg && msg.type === 'capture-selection') {
+    if (msg && (msg.type === 'capture' || msg.type === 'capture-selection')) {
       styleCache = new WeakMap();
-      const r = capture();
-      LOG('captured', r);
+      const r = capture(msg.mode || 'selection');
+      LOG('captured (' + (msg.mode || 'selection') + ')', r);
       respond(r);
     }
     return false;
   });
 
-  function capture() {
-    const sel = getSelection();
-    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return { ok: false, error: 'NO_SELECTION' };
-    const range = sel.getRangeAt(0);
-    let root = range.commonAncestorContainer;
-    if (root.nodeType === Node.TEXT_NODE) root = root.parentElement;
-    if (!root) return { ok: false, error: 'NO_SELECTION' };
+  function capture(mode) {
+    let root;
+    let range;
+    if (mode === 'page') {
+      root = document.body;
+      if (!root) return { ok: false, error: 'NO_BODY' };
+      range = document.createRange();
+      range.selectNodeContents(root);
+    } else {
+      const sel = getSelection();
+      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return { ok: false, error: 'NO_SELECTION' };
+      range = sel.getRangeAt(0);
+      root = range.commonAncestorContainer;
+      if (root.nodeType === Node.TEXT_NODE) root = root.parentElement;
+      if (!root) return { ok: false, error: 'NO_SELECTION' };
+    }
     const out = [];
     walkBlock(root, range, out);
     const markdown = out.filter((l) => l.trim()).join('\n\n').trim();
