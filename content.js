@@ -67,6 +67,9 @@
 
   // ---- block level ----
   const BLOCK_DISPLAY = /^(block|list-item|flow-root|table\b|flex|grid)/;
+  const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'IFRAME', 'FRAME', 'CANVAS', 'SVG', 'VIDEO', 'AUDIO', 'OBJECT', 'EMBED', 'SELECT', 'TEXTAREA', 'DATALIST', 'MAP', 'AREA', 'FORM']);
+  const isHidden = (el) => cs(el).display === 'none' || cs(el).visibility === 'hidden';
+  const isSkipped = (el) => SKIP_TAGS.has(el.tagName) || isHidden(el);
   const isBlockLevel = (el) => BLOCK_DISPLAY.test(cs(el).display) || /^H[1-6]$/.test(el.tagName);
   const hasBlockChildEl = (el) => Array.from(el.children).some(isBlockLevel);
 
@@ -79,6 +82,7 @@
       pending = [];
     };
     for (const child of node.childNodes) {
+      if (child.nodeType === Node.ELEMENT_NODE && isSkipped(child)) continue;
       if (child.nodeType === Node.ELEMENT_NODE && isBlockLevel(child)) {
         flush();
         handleBlock(child, range, out);
@@ -92,6 +96,7 @@
   function handleBlock(el, range, out) {
     const tag = el.tagName;
     if (!range.intersectsNode(el)) return;
+    if (isSkipped(el)) return;
     if (tag === 'HR') { out.push('---'); return; }
     if (tag === 'IMG') {
       const segs = [];
@@ -178,6 +183,7 @@
     }
     if (node.nodeType !== Node.ELEMENT_NODE) return;
     if (!range.intersectsNode(node)) return;
+    if (isSkipped(node)) return;
     const tag = node.tagName;
     if (tag === 'BR') { segs.push({ t: 'br' }); return; }
     if (tag === 'IMG') { pushImg(node, segs); return; }
@@ -257,11 +263,11 @@
     const urls = new Set();
     const add = (u) => { if (u && !u.startsWith('blob:')) urls.add(u); };
     for (const img of root.querySelectorAll('img')) {
-      if (!range.intersectsNode(img)) continue;
+      if (!range.intersectsNode(img) || isHidden(img)) continue;
       add(abs(img.currentSrc || img.getAttribute('src') || img.getAttribute('data-src')));
     }
     for (const el of [root, ...root.querySelectorAll('*')]) {
-      if (!range.intersectsNode(el)) continue;
+      if (!range.intersectsNode(el) || isSkipped(el)) continue;
       const bg = cs(el).backgroundImage;
       if (!bg || bg === 'none') continue;
       for (const m of bg.matchAll(/url\((["']?)([^"')]+)\1\)/g)) add(abs(m[2]));
@@ -273,7 +279,7 @@
   function collectLinkUrls(root, range) {
     const urls = new Set();
     for (const a of [root, ...root.querySelectorAll('a[href]')]) {
-      if (a.tagName !== 'A' || !range.intersectsNode(a)) continue;
+      if (a.tagName !== 'A' || !range.intersectsNode(a) || isHidden(a)) continue;
       const href = a.getAttribute('href');
       if (!href || href.startsWith('#') || /^\s*javascript:/i.test(href)) continue;
       const u = abs(href);

@@ -203,7 +203,9 @@ async function grabImage(src) {
 }
 
 // ---- attachment detection & lazy-link resolution (e.g. Moodle view.php) ----
-const FILE_EXT_RE = /\.(pdf|docx?|xlsx?|pptx?|zip|rar|7z|gz|tgz|bz2|tar|epub|mobi|txt|md|csv|rtf|od[tpg]|xml|json|ipynb|py|java|c|cc|cpp|h|hpp|js|ts|sql|log|tex|bib|exe|msi|dmg|apk|iso|wav|mp3|m4a|flac|ogg|mp4|mkv|avi|mov|webm|flv)([?#]|$)/i;
+// Documents / archives / media only — code & web assets (js/css/php/html/json…) are never attachments.
+const FILE_EXT_RE = /\.(pdf|docx?|xlsx?|pptx?|odt|ods|odp|rtf|epub|mobi|txt|md|csv|zip|rar|7z|gz|tgz|bz2|tar|mp3|m4a|wav|flac|ogg|mp4|mkv|avi|mov|webm|flv)([?#]|$)/i;
+const BAD_MIME_RE = /javascript|ecmascript|html|xml|x-httpd-php|shellscript|x-sh|css/i;
 const RESOURCE_RE = /(\/mod\/(resource|file|forum|assign)\/|pluginfile\.php|file\.php\?|content\.php|forcedownload=1|\/download\/|\/attachments?\/|action=download|[?&](download|file|filename)=)/i;
 
 function isAttachmentUrl(u) {
@@ -219,6 +221,7 @@ async function resolveAttachment(startUrl) {
     url = res.url || url;
     const ctype = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
     if (ctype !== 'text/html' && ctype !== 'application/xhtml+xml') {
+      if (BAD_MIME_RE.test(ctype)) throw new Error('NOT_A_FILE: ' + ctype);
       const bytes = new Uint8Array(await res.arrayBuffer());
       if (!bytes.length) throw new Error('EMPTY RESPONSE');
       return {
