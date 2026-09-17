@@ -1,4 +1,4 @@
-# Web Quoter — 选中内容转 Markdown 压缩包浏览器插件
+# Web Quoter
 
 A Chrome/Edge extension that converts a selected text+image region of any web page into a Markdown file (with bold/italic detection and locally downloaded images), packaged as a ZIP.
 
