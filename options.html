@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Web Quoter</title>
+<style>
+  body { font-family: system-ui, "Segoe UI", sans-serif; max-width: 680px; margin: 40px auto; padding: 0 16px; color: #1e293b; }
+  h1 { font-size: 20px; } h2 { font-size: 15px; margin-top: 28px; }
+  .card { border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; }
+  input[type=text] { width: 100%; box-sizing: border-box; font-size: 15px; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 6px; }
+  button { margin: 8px 6px 0 0; padding: 6px 12px; border: 1px solid #cbd5e1; border-radius: 6px; background: #f8fafc; cursor: pointer; }
+  button:hover { background: #eef2ff; }
+  #save { background: #2563eb; color: #fff; border: none; font-weight: 600; }
+  .lang[aria-pressed=true] { background: #2563eb; color: #fff; border-color: #2563eb; }
+  #preview { margin-top: 10px; font-size: 14px; color: #475569; word-break: break-all; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  td, th { border: 1px solid #e2e8f0; padding: 6px 8px; text-align: left; }
+  .muted { color: #64748b; font-size: 13px; }
+  label { display: block; margin: 6px 0; }
+</style>
+</head>
+<body>
+<h1 data-i="opt_title"></h1>
+
+<h2 data-i="h_lang"></h2>
+<div class="card" id="langs"></div>
+
+<h2 data-i="h_naming"></h2>
+<div class="card">
+  <label data-i="lbl_template"></label>
+  <input type="text" id="tpl" spellcheck="false">
+  <div>
+    <button class="ins" data-t="{site}">{site}</button>
+    <button class="ins" data-t="{url}">{url}</button>
+    <button class="ins" data-t="{title}">{title}</button>
+    <button class="ins" data-t="{date}">{date}</button>
+    <button class="ins" data-t="{time}">{time}</button>
+    <button class="ins" data-t="{datetime}">{datetime}</button>
+  </div>
+  <div id="preview"></div>
+  <p>
+    <button id="save" data-i="btn_save"></button>
+    <button id="reset" data-i="btn_reset"></button>
+    <span id="status"></span>
+  </p>
+  <p class="muted" data-i="note_naming"></p>
+</div>
+
+<table>
+  <tr><th data-i="th_ph"></th><th data-i="th_mean"></th><th data-i="th_ex"></th></tr>
+  <tr><td class="ph">{site}</td><td data-i="ph_site"></td><td>news.ycombinator.com-item-123</td></tr>
+  <tr><td class="ph">{url}</td><td data-i="ph_url"></td><td>https___news.ycombinator.com</td></tr>
+  <tr><td class="ph">{title}</td><td data-i="ph_title"></td><td>My Article</td></tr>
+  <tr><td class="ph">{date}</td><td data-i="ph_date"></td><td>2026-09-17</td></tr>
+  <tr><td class="ph">{time}</td><td data-i="ph_time"></td><td>2026-09-17 14：30：05</td></tr>
+  <tr><td class="ph">{datetime}</td><td data-i="ph_datetime"></td><td>2026-09-17_14-30-05</td></tr>
+</table>
+
+<h2 data-i="h_dup"></h2>
+<div class="card">
+  <label><input type="checkbox" id="att"> <span data-i="att_enable"></span></label>
+  <p data-i="dup_label"></p>
+  <label><input type="radio" name="dup" value="skip"> <span data-i="dup_skip"></span></label>
+  <label><input type="radio" name="dup" value="rename"> <span data-i="dup_rename"></span></label>
+</div>
+</body>
+<script src="i18n.js"></script>
+<script src="options.js"></script>
+</html>
